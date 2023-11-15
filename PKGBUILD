@@ -1,12 +1,12 @@
 pkgname=swaddle
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="Swayidle inhibitor when watching content or listening to audio"
 arch=('x86_64')
 license=('GPL')
 depends=('dbus' 'openssl')
 makedepends=('cargo' 'rust')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/attron/$pkgname/archive/$pkgver.tar.gz"
+source=("$pkgname-$pkgver.tar.gz::https://github.com/attron/$pkgname/archive/v$pkgver.tar.gz"
         "$pkgname.service")
 sha256sums=('SKIP'
             'SKIP')
