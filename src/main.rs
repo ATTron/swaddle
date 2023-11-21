@@ -36,12 +36,12 @@ impl DBusRunner {
 
 impl DBusInterface for DBusRunner {
     fn add_match(&self) -> Result<(), Box<dyn Error>> {
-        let m_rule = MatchRule::new()
+        let rule = MatchRule::new()
             .with_interface(INTERFACE_NAME)
             .with_namespaced_path(DBUS_NAMESPACE);
 
         let sending_clone = Arc::clone(&self.good_to_send);
-        self.connection.add_match(m_rule, move |_: (), _, msg| {
+        self.connection.add_match(rule, move |_: (), _, msg| {
             let items: HashMap<String, Variant<Box<dyn RefArg>>> =
                 msg.read3::<String, HashMap<_, _>, Vec<String>>().unwrap().1;
             if let Some(playback_status) = items.get("PlaybackStatus") {

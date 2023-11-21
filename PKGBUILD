@@ -1,32 +1,24 @@
 pkgname=swaddle
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc="Swayidle inhibitor when watching content or listening to audio"
 arch=('x86_64')
-license=('GPL')
-depends=('dbus' 'openssl')
-makedepends=('cargo' 'rust')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/attron/$pkgname/archive/v$pkgver.tar.gz"
-        "$pkgname.service")
-sha256sums=('SKIP'
-            'SKIP')
-
+url="https://github.com/ATTron/swaddle"
+license=('MIT')
+source=("$url/archive/$pkgver.tar.gz")
+sha256sums=('SKIP')
 
 build() {
     cd "$srcdir/$pkgname-$pkgver"
-    cargo build --release --locked
+    cargo build --release
 }
 
 package() {
     cd "$srcdir/$pkgname-$pkgver"
-    install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
-    install -Dm644 "$srcdir/$pkgname.service" "$pkgdir/usr/lib/systemd/system/$pkgname.service"
-}
+    install -Dm755 "target/release/swaddle" "$pkgdir/usr/local/bin/swaddle"
 
-post_install() {
-    systemctl daemon-reload
-}
-
-post_upgrade() {
-    post_install
+    # Post-install instructions
+    echo "Swaddle has been installed. To integrate it with Sway, add the following line to your Sway configuration:"
+    echo "exec_always --no-startup-id /usr/local/bin/swaddle &"
+    echo "Then reload your Sway configuration or restart Sway."
 }

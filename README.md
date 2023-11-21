@@ -2,6 +2,19 @@
 
 **note**  
 **right now this has only been tested with firefox, not sure how well it will work with chrome based browsers at this time**
+## Installation
+
+Swaddle can be installed from the AUR:
+
+```sh
+yay -S swaddle
+```
+
+## Post-Install
+ To integrate swaddle with Sway, add the following line to your Sway configuration:
+ `exec_always --no-startup-id /usr/bin/swaddle &`
+ Then reload your Sway configuration or restart Sway.
+
 ## Overview
 
 The main function of this project is to keep swayWM from going into an idle state when watching Youtube videos. This Rust project includes a D-Bus Runner (`DBusRunner`) and an Idle Application (`IdleApp`). It is designed to interface with D-Bus for message handling, particularly for managing media playback statuses, and to execute commands based on these statuses. 
