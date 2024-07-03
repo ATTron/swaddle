@@ -1,7 +1,10 @@
 # README for Swaddle
 
+Swayidle inhibitor that automatically detects audio / video and will prevent your system from sleeping. No manual intervention needed!
+
 **note**  
 **right now this has only been tested with firefox, not sure how well it will work with chrome based browsers at this time**
+
 ## Installation
 
 Swaddle can be installed from the AUR:
@@ -11,9 +14,10 @@ yay -S swaddle
 ```
 
 ## Post-Install
- To integrate swaddle with Sway, add the following line to your Sway configuration:
- `exec_always --no-startup-id /usr/bin/swaddle &`
- Then reload your Sway configuration or restart Sway.
+
+ To integrate swaddle with Sway/Hyprland, add the following line to your Sway/Hypr configuration:
+ `exec_always --no-startup-id /usr/local/bin/swaddle &`
+ Then reload your configuration or restart Sway/Hyprland.
 
 ## Overview
 
