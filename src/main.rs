@@ -7,6 +7,7 @@ use std::{
     collections::HashMap,
     error::Error,
     process::{Child, Command},
+    sync::atomic::AtomicBool,
     sync::{Arc, Mutex},
     thread::sleep,
     time::{Duration, Instant},
@@ -16,12 +17,9 @@ trait DBusInterface {
     fn add_match(&self) -> Result<(), Box<dyn Error>>;
 }
 
-trait CommandCaller {
-    fn execute_command(&self) -> Result<(), Box<dyn Error>>;
-}
 struct DBusRunner {
     connection: Arc<Connection>,
-    good_to_send: Arc<Mutex<bool>>,
+    good_to_send: Arc<AtomicBool>,
 }
 
 impl DBusRunner {
@@ -29,7 +27,7 @@ impl DBusRunner {
         let connection = Connection::new_session()?;
         Ok(DBusRunner {
             connection: Arc::new(connection),
-            good_to_send: Arc::new(Mutex::new(false)),
+            good_to_send: Arc::new(AtomicBool::new(false)),
         })
     }
 }
@@ -40,21 +38,17 @@ impl DBusInterface for DBusRunner {
             .with_interface(INTERFACE_NAME)
             .with_namespaced_path(DBUS_NAMESPACE);
 
-        let sending_clone = Arc::clone(&self.good_to_send);
+        let good_to_send = Arc::clone(&self.good_to_send);
         self.connection.add_match(rule, move |_: (), _, msg| {
             let items: HashMap<String, Variant<Box<dyn RefArg>>> =
                 msg.read3::<String, HashMap<_, _>, Vec<String>>().unwrap().1;
             if let Some(playback_status) = items.get("PlaybackStatus") {
                 if let Some(status) = playback_status.0.as_str() {
                     if status == "Paused" {
-                        if let Ok(mut send_it) = sending_clone.lock() {
-                            *send_it = false;
-                        }
+                        good_to_send.store(false, std::sync::atomic::Ordering::SeqCst);
                     }
                     if status == "Playing" {
-                        if let Ok(mut send_it) = sending_clone.lock() {
-                            *send_it = true;
-                        }
+                        good_to_send.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                 }
             }
@@ -101,18 +95,20 @@ impl IdleApp {
                             .process(Duration::from_millis(1000))
                         {
                             Ok(_) => {
-                                if let Ok(block) = self.dbus_runner.good_to_send.lock() {
-                                    if *block {
-                                        match self.run_cmd() {
-                                            Ok(child) => inhibit.0 = Some(child),
-                                            Err(e) => {
-                                                eprintln!("unable to block swayidle :: {:?}", e)
-                                            }
+                                let block = self
+                                    .dbus_runner
+                                    .good_to_send
+                                    .load(std::sync::atomic::Ordering::SeqCst);
+                                if block {
+                                    match self.run_cmd() {
+                                        Ok(child) => inhibit.0 = Some(child),
+                                        Err(e) => {
+                                            eprintln!("unable to block swayidle :: {:?}", e)
                                         }
-                                    } else if !*block {
-                                        if let Some(mut killing) = inhibit.0.take() {
-                                            let _ = killing.kill();
-                                        }
+                                    }
+                                } else if !block {
+                                    if let Some(mut killing) = inhibit.0.take() {
+                                        let _ = killing.kill();
                                     }
                                 }
                             }
@@ -197,25 +193,5 @@ mod idle_app_tests {
     fn test_idle_app_initialization() {
         let app = IdleApp::new(60);
         assert!(app.is_ok());
-    }
-}
-
-#[cfg(test)]
-mod command_caller_tests {
-    use super::*;
-
-    struct MockCommandCaller;
-
-    impl CommandCaller for MockCommandCaller {
-        fn execute_command(&self) -> Result<(), Box<dyn Error>> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn test_execute_command() {
-        let mock_caller = MockCommandCaller;
-        let result = mock_caller.execute_command();
-        assert!(result.is_ok());
     }
 }
