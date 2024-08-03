@@ -3,6 +3,7 @@ use dbus::{
     blocking::Connection,
     message::MatchRule,
 };
+use env_logger::Env;
 use std::{
     collections::HashMap,
     error::Error,
@@ -39,7 +40,7 @@ impl DBusInterface for DBusRunner {
             .with_namespaced_path(DBUS_NAMESPACE);
 
         let good_to_send = Arc::clone(&self.good_to_send);
-        self.connection.add_match(rule, move |_: (), _, msg| {
+        self.connection.add_match(rule, move |(), _, msg| {
             let items: HashMap<String, Variant<Box<dyn RefArg>>> =
                 msg.read3::<String, HashMap<_, _>, Vec<String>>().unwrap().1;
             if let Some(playback_status) = items.get("PlaybackStatus") {
@@ -63,6 +64,7 @@ struct IdleApp {
     inhibit_duration: i64,
     last_block_time: Arc<Mutex<Option<Instant>>>,
     inhibit_process: Arc<Mutex<(Option<Child>, Instant)>>,
+    process_running: Arc<AtomicBool>,
 }
 
 impl IdleApp {
@@ -73,6 +75,7 @@ impl IdleApp {
             inhibit_duration,
             last_block_time: Arc::new(Mutex::new(None)),
             inhibit_process: Arc::new(Mutex::new((None::<Child>, Instant::now()))),
+            process_running: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -86,8 +89,11 @@ impl IdleApp {
             if current_time >= next_check {
                 if let Ok(mut inhibit) = self.inhibit_process.lock() {
                     if inhibit.0.is_none() || current_time >= inhibit.1 {
+                        let process_running = Arc::clone(&self.process_running);
                         if let Some(mut child) = inhibit.0.take() {
+                            child.wait()?;
                             let _ = child.kill();
+                            process_running.store(false, std::sync::atomic::Ordering::SeqCst);
                         }
                         match self
                             .dbus_runner
@@ -99,16 +105,36 @@ impl IdleApp {
                                     .dbus_runner
                                     .good_to_send
                                     .load(std::sync::atomic::Ordering::SeqCst);
-                                if block {
+                                // Only spawn a single child if its blocking already, move on
+                                log::debug!(
+                                    "should_block = {} - process_running = {:?}",
+                                    block,
+                                    process_running,
+                                );
+                                if block
+                                    && !process_running.load(std::sync::atomic::Ordering::SeqCst)
+                                {
+                                    if let Some(mut killing) = inhibit.0.take() {
+                                        killing.wait()?;
+                                        killing.kill()?;
+                                    }
                                     match self.run_cmd() {
-                                        Ok(child) => inhibit.0 = Some(child),
+                                        Ok(child) => {
+                                            log::debug!("Swayidle is inhibiting now!");
+                                            inhibit.0 = Some(child);
+                                            process_running
+                                                .store(true, std::sync::atomic::Ordering::SeqCst);
+                                        }
                                         Err(e) => {
                                             eprintln!("unable to block swayidle :: {:?}", e)
                                         }
                                     }
                                 } else if !block {
                                     if let Some(mut killing) = inhibit.0.take() {
-                                        let _ = killing.kill();
+                                        killing.wait()?;
+                                        killing.kill()?;
+                                        process_running
+                                            .store(false, std::sync::atomic::Ordering::SeqCst);
                                     }
                                 }
                             }
@@ -126,6 +152,7 @@ impl IdleApp {
     }
 
     fn run_cmd(&self) -> Result<Child, Box<dyn Error>> {
+        log::debug!("command is spawning");
         match Command::new("systemd-inhibit")
             .arg("--what")
             .arg("idle")
@@ -163,6 +190,8 @@ const INHIBIT_DURATION: u64 = 55;
 const OVERLAP_DURATION: u64 = 5;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    log::debug!("Swaddle starting up");
     let app = IdleApp::new(60)?;
     app.run()
 }
