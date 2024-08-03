@@ -114,13 +114,13 @@ impl IdleApp {
                                 if block
                                     && !process_running.load(std::sync::atomic::Ordering::SeqCst)
                                 {
+                                    if let Some(mut killing) = inhibit.0.take() {
+                                        killing.wait()?;
+                                        killing.kill()?;
+                                    }
                                     match self.run_cmd() {
                                         Ok(child) => {
                                             log::debug!("Swayidle is inhibiting now!");
-                                            if let Some(mut killing) = inhibit.0.take() {
-                                                killing.wait()?;
-                                                killing.kill()?;
-                                            }
                                             inhibit.0 = Some(child);
                                             process_running
                                                 .store(true, std::sync::atomic::Ordering::SeqCst);
