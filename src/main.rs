@@ -45,11 +45,10 @@ impl DBusInterface for DBusRunner {
                 msg.read3::<String, HashMap<_, _>, Vec<String>>().unwrap().1;
             if let Some(playback_status) = items.get("PlaybackStatus") {
                 if let Some(status) = playback_status.0.as_str() {
-                    if status == "Paused" {
-                        good_to_send.store(false, std::sync::atomic::Ordering::SeqCst);
-                    }
                     if status == "Playing" {
                         good_to_send.store(true, std::sync::atomic::Ordering::SeqCst);
+                    } else {
+                        good_to_send.store(false, std::sync::atomic::Ordering::SeqCst);
                     }
                 }
             }
