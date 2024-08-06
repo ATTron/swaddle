@@ -8,8 +8,7 @@ use std::{
     collections::HashMap,
     error::Error,
     process::{Child, Command},
-    sync::atomic::AtomicBool,
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicBool, Arc, Mutex},
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -45,6 +44,7 @@ impl DBusInterface for DBusRunner {
                 msg.read3::<String, HashMap<_, _>, Vec<String>>().unwrap().1;
             if let Some(playback_status) = items.get("PlaybackStatus") {
                 if let Some(status) = playback_status.0.as_str() {
+                    log::debug!("Status found {}", status);
                     if status == "Playing" {
                         good_to_send.store(true, std::sync::atomic::Ordering::SeqCst);
                     } else {
@@ -121,8 +121,6 @@ impl IdleApp {
                                         Ok(child) => {
                                             log::debug!("Swayidle is inhibiting now!");
                                             inhibit.0 = Some(child);
-                                            process_running
-                                                .store(true, std::sync::atomic::Ordering::SeqCst);
                                         }
                                         Err(e) => {
                                             eprintln!("unable to block swayidle :: {:?}", e)
@@ -152,6 +150,7 @@ impl IdleApp {
 
     fn run_cmd(&self) -> Result<Child, Box<dyn Error>> {
         log::debug!("command is spawning");
+        let process_running = Arc::clone(&self.process_running);
         match Command::new("systemd-inhibit")
             .arg("--what")
             .arg("idle")
@@ -170,6 +169,7 @@ impl IdleApp {
                 if let Ok(mut last_block_time) = self.last_block_time.lock() {
                     *last_block_time = Some(Instant::now());
                 }
+                process_running.store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(child)
             }
             Err(e) => {
@@ -185,13 +185,13 @@ impl IdleApp {
 
 const INTERFACE_NAME: &str = "org.freedesktop.DBus.Properties";
 const DBUS_NAMESPACE: &str = "/org/mpris/MediaPlayer2";
-const INHIBIT_DURATION: u64 = 55;
+const INHIBIT_DURATION: u64 = 25;
 const OVERLAP_DURATION: u64 = 5;
 
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     log::debug!("Swaddle starting up");
-    let app = IdleApp::new(60)?;
+    let app = IdleApp::new(30)?;
     app.run()
 }
 
