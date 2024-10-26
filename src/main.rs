@@ -1,25 +1,23 @@
 use dbus::{
-    arg::{messageitem::MessageItem, RefArg, Variant},
+    arg::messageitem::MessageItem,
     blocking::{BlockingSender, Connection},
-    message::MatchRule,
     Message,
 };
 use env_logger::Env;
-use log::warn;
 use std::{
-    collections::HashMap,
     error::Error,
     process::{Child, Command},
-    sync::{atomic::AtomicBool, Arc, Mutex},
-    thread::sleep,
-    time::{Duration, Instant},
+    time::Instant,
 };
+use std::{sync::atomic::AtomicBool, thread::sleep, time::Duration};
 
 struct IdleApp {
     conn: Connection,
     inhibit_duration: u64,
     process_running: AtomicBool,
     should_block: AtomicBool,
+    inhibit_process: Option<Child>,
+    last_block_time: Option<Instant>,
 }
 
 impl IdleApp {
@@ -30,67 +28,153 @@ impl IdleApp {
             inhibit_duration,
             process_running: AtomicBool::new(false),
             should_block: AtomicBool::new(false),
+            inhibit_process: None::<Child>,
+            last_block_time: None,
         }
     }
 
-    fn check_playback_status(&self) {
-        let service = "org.mpris.MediaPlayer2.firefox.instance_1_41";
-        let object_path = "/org/mpris/MediaPlayer2";
-        let interface = "org.mpris.MediaPlayer2.Player";
-        let property = "PlaybackStatus";
-
+    // We want to check every single media player to see if they are playing
+    fn list_media_players(&self) -> Result<Vec<String>, dbus::Error> {
         let msg = Message::new_method_call(
-            service,
-            object_path,
-            "org.freedesktop.DBus.Properties",
-            "Get",
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "ListNames",
         )
-        .unwrap()
-        .append1(interface)
-        .append1(property);
+        .map_err(|e| dbus::Error::new_failed(&e.to_string()))?;
 
         let response = self
             .conn
-            .send_with_reply_and_block(msg, Duration::from_secs(5));
+            .send_with_reply_and_block(msg, Duration::from_secs(5))?;
+        let names: Vec<String> = response
+            .get1()
+            .ok_or_else(|| dbus::Error::new_failed("Failed to get names from response"))?;
 
-        match response {
-            Ok(resp) => {
-                if let Some(arg) = resp.get_items().get(0) {
-                    // Match on the MessageItem to see if it is a Variant
-                    println!("ARG IS {:?}", arg);
-                    match arg {
-                        MessageItem::Variant(ref value) => match **value {
-                            MessageItem::Str(ref s) => {
-                                println!("showing unwrapped: {}", s);
-                                if s == "Playing" {
-                                    self.should_block
-                                        .store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(names
+            .into_iter()
+            .filter(|name| name.starts_with("org.mpris.MediaPlayer2."))
+            .collect())
+    }
+
+    fn check_playback_status(&self) -> Result<(), Box<dyn Error>> {
+        let players = self.list_media_players()?;
+
+        for service in players {
+            let object_path = "/org/mpris/MediaPlayer2";
+            let interface = "org.mpris.MediaPlayer2.Player";
+            let property = "PlaybackStatus";
+
+            let msg = Message::new_method_call(
+                service,
+                object_path,
+                "org.freedesktop.DBus.Properties",
+                "Get",
+            )
+            .unwrap()
+            .append1(interface)
+            .append1(property);
+
+            let response = self
+                .conn
+                .send_with_reply_and_block(msg, Duration::from_secs(5));
+
+            match response {
+                Ok(resp) => {
+                    if let Some(arg) = resp.get_items().get(0) {
+                        println!("ARG IS {:?}", arg);
+                        match arg {
+                            MessageItem::Variant(ref value) => match **value {
+                                MessageItem::Str(ref s) => {
+                                    println!("showing unwrapped: {}", s);
+                                    if s == "Playing" {
+                                        self.should_block
+                                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                                        break;
+                                    }
+                                    if s == "Paused" {
+                                        self.should_block
+                                            .store(false, std::sync::atomic::Ordering::SeqCst);
+                                    }
                                 }
-                                if s == "Paused" {
-                                    self.should_block
-                                        .store(false, std::sync::atomic::Ordering::SeqCst);
-                                }
+                                _ => println!("Not a string variant inside Variant"),
+                            },
+                            _ => {
+                                println!("Not a Variant");
                             }
-                            _ => println!("Not a string variant inside Variant"),
-                        },
-                        _ => {
-                            println!("Not a Variant");
                         }
+                    } else {
+                        println!("No arguments found in the message.");
                     }
-                } else {
-                    println!("No arguments found in the message.");
+                }
+                Err(_) => {
+                    eprintln!("Unable to lookup playback currently...skipping");
                 }
             }
-            Err(_) => {
-                eprintln!("Unable to lookup playback currently...skipping");
+        }
+        Ok(())
+    }
+
+    fn run(&mut self) -> Result<(), Box<dyn Error>> {
+        loop {
+            let _ = self.check_playback_status();
+            log::debug!(
+                "should_block: {:?} -- process_running: {:?}",
+                self.should_block,
+                self.process_running
+            );
+            if self.should_block.load(std::sync::atomic::Ordering::SeqCst)
+                && !self
+                    .process_running
+                    .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                if let Some(mut killing) = self.inhibit_process.take() {
+                    killing.wait()?;
+                    killing.kill()?;
+                }
+                // match &self.run_cmd() {
+                //     Ok(child) => {
+                //         let child_clone = child.clone();
+                //         log::debug!("Swayidle is inhibiting now!");
+                //         self.inhibit_process = Some(*child_clone);
+                //     }
+                //     Err(e) => {
+                //         eprintln!("unable to block swayidle :: {:?}", e)
+                //     }
+                // }
+                sleep(Duration::from_millis(5000));
             }
         }
     }
 
-    fn run(&self) {
-        loop {
-            self.check_playback_status();
-            sleep(Duration::from_millis(5000));
+    fn run_cmd(mut self) -> Result<Child, Box<dyn Error>> {
+        log::debug!("command is spawning");
+        match Command::new("systemd-inhibit")
+            .arg("--what")
+            .arg("idle")
+            .arg("--who")
+            .arg("swayidle-inhibit")
+            .arg("--why")
+            .arg("audio playing")
+            .arg("--mode")
+            .arg("block")
+            .arg("sh")
+            .arg("-c")
+            .arg(format!("sleep {}", self.inhibit_duration))
+            .spawn()
+        {
+            Ok(child) => {
+                self.last_block_time = Some(Instant::now());
+                self.process_running
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(child)
+            }
+            Err(e) => {
+                eprintln!("Failed to execute systemd-inhibit command: {:?}", e);
+                Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Unable to block swayidle due to unknown error",
+                )))
+            }
         }
     }
 }
@@ -206,6 +290,6 @@ fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     log::debug!("Swaddle starting up");
 
-    let app = IdleApp::new(INHIBIT_DURATION);
+    let mut app = IdleApp::new(INHIBIT_DURATION);
     app.run();
 }
