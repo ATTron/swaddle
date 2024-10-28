@@ -154,7 +154,7 @@ impl IdleApp {
                     }
                 }
             }
-            sleep(Duration::from_millis(5000));
+            sleep(Duration::from_secs(OVERLAP_DURATION));
         }
     }
 
