@@ -34,7 +34,21 @@ RUST_LOG=debug ./target/release/swaddle
 ## Post-Install
 
  To integrate swaddle with Sway/Hyprland, add the following line to your Sway/Hypr configuration:
- `exec_always --no-startup-id /usr/local/bin/swaddle &`
+
+* Sway:
+
+```conf
+# Swaddle configuration
+exec_always --no-startup-id /usr/local/bin/swaddle &
+```
+
+* Hyprland:
+
+```conf
+# Swaddle configuration
+exec = /usr/local/bin/swaddle &
+```
+
  Then reload your configuration or restart Sway/Hyprland.
 
 ## Overview
