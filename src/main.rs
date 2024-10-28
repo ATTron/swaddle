@@ -122,31 +122,41 @@ impl IdleApp {
                 self.should_block,
                 self.process_running
             );
-            if self.should_block.load(std::sync::atomic::Ordering::SeqCst)
-                && !self
-                    .process_running
-                    .load(std::sync::atomic::Ordering::SeqCst)
-            {
-                if let Some(mut killing) = self.inhibit_process.take() {
-                    killing.wait()?;
-                    killing.kill()?;
+            if let Some(time) = self.last_block_time {
+                if Instant::now() >= time + Duration::from_secs(self.inhibit_duration) {
+                    if self.should_block.load(std::sync::atomic::Ordering::SeqCst)
+                        && !self
+                            .process_running
+                            .load(std::sync::atomic::Ordering::SeqCst)
+                    {
+                        if let Some(mut killing) = self.inhibit_process.take() {
+                            killing.wait()?;
+                            killing.kill()?;
+                        }
+                        match self.run_cmd() {
+                            Ok(child) => {
+                                log::debug!("Swayidle is inhibiting now!");
+                                self.inhibit_process = Some(child);
+                            }
+                            Err(e) => {
+                                eprintln!("unable to block swayidle :: {:?}", e)
+                            }
+                        }
+                    } else if !self.should_block.load(std::sync::atomic::Ordering::SeqCst) {
+                        if let Some(ref mut killing) = self.inhibit_process {
+                            killing.wait()?;
+                            killing.kill()?;
+                            self.process_running
+                                .store(false, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
                 }
-                // match &self.run_cmd() {
-                //     Ok(child) => {
-                //         let child_clone = child.clone();
-                //         log::debug!("Swayidle is inhibiting now!");
-                //         self.inhibit_process = Some(*child_clone);
-                //     }
-                //     Err(e) => {
-                //         eprintln!("unable to block swayidle :: {:?}", e)
-                //     }
-                // }
-                sleep(Duration::from_millis(5000));
             }
+            sleep(Duration::from_millis(5000));
         }
     }
 
-    fn run_cmd(mut self) -> Result<Child, Box<dyn Error>> {
+    fn run_cmd(&mut self) -> Result<Child, Box<dyn Error>> {
         log::debug!("command is spawning");
         match Command::new("systemd-inhibit")
             .arg("--what")
@@ -281,15 +291,12 @@ impl IdleApp {
 //     }
 // }
 
-// const INTERFACE_NAME: &str = "org.freedesktop.DBus.Properties";
-// const DBUS_NAMESPACE: &str = "/org/mpris/MediaPlayer2";
 const INHIBIT_DURATION: u64 = 25;
-// const OVERLAP_DURATION: u64 = 5;
 
 fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     log::debug!("Swaddle starting up");
 
     let mut app = IdleApp::new(INHIBIT_DURATION);
-    app.run();
+    let _ = app.run();
 }
