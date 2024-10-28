@@ -154,7 +154,7 @@ impl IdleApp {
                     }
                 }
             }
-            sleep(Duration::from_secs(OVERLAP_DURATION));
+            sleep(Duration::from_secs(SLEEP_DURATION));
         }
     }
 
@@ -192,6 +192,7 @@ impl IdleApp {
 }
 
 const INHIBIT_DURATION: u64 = 25;
+const SLEEP_DURATION: u64 = 5;
 
 fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
