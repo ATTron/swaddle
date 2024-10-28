@@ -9,13 +9,13 @@ use std::{
     process::{Child, Command},
     time::Instant,
 };
-use std::{sync::atomic::AtomicBool, thread::sleep, time::Duration};
+use std::{thread::sleep, time::Duration};
 
 struct IdleApp {
     conn: Connection,
     inhibit_duration: u64,
-    process_running: AtomicBool,
-    should_block: AtomicBool,
+    process_running: bool,
+    should_block: bool,
     inhibit_process: Option<Child>,
     last_block_time: Option<Instant>,
 }
@@ -26,8 +26,8 @@ impl IdleApp {
         IdleApp {
             conn,
             inhibit_duration,
-            process_running: AtomicBool::new(false),
-            should_block: AtomicBool::new(false),
+            process_running: false,
+            should_block: false,
             inhibit_process: None::<Child>,
             last_block_time: None,
         }
@@ -56,9 +56,14 @@ impl IdleApp {
             .collect())
     }
 
-    fn check_playback_status(&self) -> Result<(), Box<dyn Error>> {
+    fn check_playback_status(&mut self) -> Result<(), Box<dyn Error>> {
         let players = self.list_media_players()?;
 
+        log::debug!("Listing players! {:?}", players);
+        if players.len() <= 0 && self.process_running {
+            self.should_block = false;
+            return Ok(());
+        }
         for service in players {
             let object_path = "/org/mpris/MediaPlayer2";
             let interface = "org.mpris.MediaPlayer2.Player";
@@ -78,6 +83,7 @@ impl IdleApp {
                 .conn
                 .send_with_reply_and_block(msg, Duration::from_secs(5));
 
+            log::debug!("response is {:?}", response);
             match response {
                 Ok(resp) => {
                     if let Some(arg) = resp.get_items().get(0) {
@@ -87,14 +93,10 @@ impl IdleApp {
                                 MessageItem::Str(ref s) => {
                                     log::debug!("showing unwrapped: {}", s);
                                     if s == "Playing" {
-                                        self.should_block
-                                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                                        self.should_block = true;
                                         break;
                                     }
-                                    if s == "Paused" {
-                                        self.should_block
-                                            .store(false, std::sync::atomic::Ordering::SeqCst);
-                                    }
+                                    self.should_block = false;
                                 }
                                 _ => log::debug!("Not a string inside the variant. . . IDK what to do so I will throw it away. It is a {:?}", value),
                             },
@@ -117,6 +119,8 @@ impl IdleApp {
     }
 
     fn run(&mut self) -> Result<(), Box<dyn Error>> {
+        let mut next_check = Instant::now();
+        self.last_block_time = Some(Instant::now());
         loop {
             let _ = self.check_playback_status();
             log::debug!(
@@ -124,37 +128,37 @@ impl IdleApp {
                 self.should_block,
                 self.process_running
             );
-            if let Some(time) = self.last_block_time {
-                if Instant::now() >= time + Duration::from_secs(self.inhibit_duration) {
-                    if self.should_block.load(std::sync::atomic::Ordering::SeqCst)
-                        && !self
-                            .process_running
-                            .load(std::sync::atomic::Ordering::SeqCst)
-                    {
-                        if let Some(mut killing) = self.inhibit_process.take() {
-                            killing.wait()?;
-                            killing.kill()?;
+            if Instant::now() >= next_check {
+                log::debug!("hey we made it into the timing check");
+                if self.should_block && !self.process_running {
+                    log::debug!("HEY WE SHOULD BLOCK");
+                    if let Some(mut killing) = self.inhibit_process.take() {
+                        killing.wait()?;
+                        killing.kill()?;
+                    }
+                    match self.run_cmd() {
+                        Ok(child) => {
+                            log::debug!("Swayidle is inhibiting now!");
+                            self.inhibit_process = Some(child);
+                            next_check = next_check + Duration::from_secs(self.inhibit_duration);
                         }
-                        match self.run_cmd() {
-                            Ok(child) => {
-                                log::debug!("Swayidle is inhibiting now!");
-                                self.inhibit_process = Some(child);
-                            }
-                            Err(e) => {
-                                eprintln!("unable to block swayidle :: {:?}", e)
-                            }
+                        Err(e) => {
+                            eprintln!("unable to block swayidle :: {:?}", e)
                         }
-                    } else if !self.should_block.load(std::sync::atomic::Ordering::SeqCst) {
-                        if let Some(ref mut killing) = self.inhibit_process {
-                            killing.wait()?;
-                            killing.kill()?;
-                            self.process_running
-                                .store(false, std::sync::atomic::Ordering::SeqCst);
-                        }
+                    }
+                } else if !self.should_block {
+                    if let Some(ref mut killing) = self.inhibit_process {
+                        killing.wait()?;
+                        killing.kill()?;
+                        self.process_running = false;
                     }
                 }
             }
-            sleep(Duration::from_secs(SLEEP_DURATION));
+            if self.should_block && self.process_running {
+                sleep(Duration::from_secs(SLEEP_DURATION + INHIBIT_DURATION))
+            } else {
+                sleep(Duration::from_secs(SLEEP_DURATION));
+            }
         }
     }
 
@@ -176,8 +180,7 @@ impl IdleApp {
             Ok(child) => {
                 log::debug!("systemd-inhibit has been spawned");
                 self.last_block_time = Some(Instant::now());
-                self.process_running
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                self.process_running = true;
                 Ok(child)
             }
             Err(e) => {
