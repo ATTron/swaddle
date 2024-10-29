@@ -59,13 +59,13 @@ The main function of this project is to keep any sway based WM from going into a
 ## Dependencies
 
 * `dbus`: For interfacing with the D-Bus.
-* `std`: Standard library, particularly for error handling, synchronization primitives, and process management.
+* `env_logger`: For better log handling
 
 ## Future Enhancements
 
 * Extend the command execution capabilities based on additional playback statuses or other D-Bus signals.
 * Integrate with more complex system behaviors or external applications.
 * Improve error handling and logging for better diagnostics and maintenance.
-* Add more unit tests and integration tests
+* Add unit tests and integration tests
 
 ---
