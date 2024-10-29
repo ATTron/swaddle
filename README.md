@@ -1,4 +1,4 @@
-# README for Swaddle
+# Swaddle
 
 Swayidle inhibitor that automatically detects audio / video and will prevent your system from sleeping. No manual intervention needed!
 
