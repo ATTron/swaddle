@@ -133,6 +133,7 @@ impl IdleApp {
                 if self.should_block && !self.process_running {
                     log::debug!("HEY WE SHOULD BLOCK");
                     if let Some(mut killing) = self.inhibit_process.take() {
+                        log::debug!("Killing the child process");
                         killing.wait()?;
                         killing.kill()?;
                     }
@@ -148,6 +149,7 @@ impl IdleApp {
                     }
                 } else if !self.should_block {
                     if let Some(ref mut killing) = self.inhibit_process {
+                        log::debug!("Killing the child process");
                         killing.wait()?;
                         killing.kill()?;
                         self.process_running = false;
