@@ -200,6 +200,7 @@ const SLEEP_DURATION: u64 = 5;
 fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     log::debug!("Swaddle starting up");
+    log::debug!("Swaddle rewrite version is being called");
 
     let mut app = IdleApp::new(INHIBIT_DURATION);
     let _ = app.run();
