@@ -1,156 +1,179 @@
 use dbus::{
-    arg::{RefArg, Variant},
-    blocking::Connection,
-    message::MatchRule,
+    arg::messageitem::MessageItem,
+    blocking::{BlockingSender, Connection},
+    Message,
 };
 use env_logger::Env;
 use std::{
-    collections::HashMap,
     error::Error,
     process::{Child, Command},
-    sync::{atomic::AtomicBool, Arc, Mutex},
-    thread::sleep,
-    time::{Duration, Instant},
+    time::Instant,
 };
-
-trait DBusInterface {
-    fn add_match(&self) -> Result<(), Box<dyn Error>>;
-}
-
-struct DBusRunner {
-    connection: Arc<Connection>,
-    good_to_send: Arc<AtomicBool>,
-}
-
-impl DBusRunner {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
-        let connection = Connection::new_session()?;
-        Ok(DBusRunner {
-            connection: Arc::new(connection),
-            good_to_send: Arc::new(AtomicBool::new(false)),
-        })
-    }
-}
-
-impl DBusInterface for DBusRunner {
-    fn add_match(&self) -> Result<(), Box<dyn Error>> {
-        let rule = MatchRule::new()
-            .with_interface(INTERFACE_NAME)
-            .with_namespaced_path(DBUS_NAMESPACE);
-
-        let good_to_send = Arc::clone(&self.good_to_send);
-        self.connection.add_match(rule, move |(), _, msg| {
-            let items: HashMap<String, Variant<Box<dyn RefArg>>> =
-                msg.read3::<String, HashMap<_, _>, Vec<String>>().unwrap().1;
-            if let Some(playback_status) = items.get("PlaybackStatus") {
-                if let Some(status) = playback_status.0.as_str() {
-                    log::debug!("Status found {}", status);
-                    if status == "Playing" {
-                        good_to_send.store(true, std::sync::atomic::Ordering::SeqCst);
-                    } else {
-                        good_to_send.store(false, std::sync::atomic::Ordering::SeqCst);
-                    }
-                }
-            }
-            true
-        })?;
-        Ok(())
-    }
-}
+use std::{thread::sleep, time::Duration};
 
 struct IdleApp {
-    dbus_runner: DBusRunner,
-    inhibit_duration: i64,
-    last_block_time: Arc<Mutex<Option<Instant>>>,
-    inhibit_process: Arc<Mutex<(Option<Child>, Instant)>>,
-    process_running: Arc<AtomicBool>,
+    conn: Connection,
+    inhibit_duration: u64,
+    process_running: bool,
+    should_block: bool,
+    inhibit_process: Option<Child>,
+    last_block_time: Option<Instant>,
 }
 
 impl IdleApp {
-    fn new(inhibit_duration: i64) -> Result<Self, Box<dyn Error>> {
-        let dbus_runner = DBusRunner::new()?;
-        Ok(IdleApp {
-            dbus_runner,
+    fn new(inhibit_duration: u64) -> IdleApp {
+        let conn = Connection::new_session().expect("Failed to connect to D-Bus");
+        IdleApp {
+            conn,
             inhibit_duration,
-            last_block_time: Arc::new(Mutex::new(None)),
-            inhibit_process: Arc::new(Mutex::new((None::<Child>, Instant::now()))),
-            process_running: Arc::new(AtomicBool::new(false)),
-        })
+            process_running: false,
+            should_block: false,
+            inhibit_process: None::<Child>,
+            last_block_time: None,
+        }
     }
 
-    fn run(&self) -> Result<(), Box<dyn Error>> {
-        if let Err(e) = self.dbus_runner.add_match() {
-            eprintln!("Unable to setup dbus_runner :: {:?}", e);
-        }
-        let mut next_check = Instant::now();
-        loop {
-            let current_time = Instant::now();
-            if current_time >= next_check {
-                if let Ok(mut inhibit) = self.inhibit_process.lock() {
-                    if inhibit.0.is_none() || current_time >= inhibit.1 {
-                        let process_running = Arc::clone(&self.process_running);
-                        if let Some(mut child) = inhibit.0.take() {
-                            child.wait()?;
-                            let _ = child.kill();
-                            process_running.store(false, std::sync::atomic::Ordering::SeqCst);
-                        }
-                        match self
-                            .dbus_runner
-                            .connection
-                            .process(Duration::from_millis(1000))
-                        {
-                            Ok(_) => {
-                                let block = self
-                                    .dbus_runner
-                                    .good_to_send
-                                    .load(std::sync::atomic::Ordering::SeqCst);
-                                // Only spawn a single child if its blocking already, move on
-                                log::debug!(
-                                    "should_block = {} - process_running = {:?}",
-                                    block,
-                                    process_running,
-                                );
-                                if block
-                                    && !process_running.load(std::sync::atomic::Ordering::SeqCst)
-                                {
-                                    if let Some(mut killing) = inhibit.0.take() {
-                                        killing.wait()?;
-                                        killing.kill()?;
-                                    }
-                                    match self.run_cmd() {
-                                        Ok(child) => {
-                                            log::debug!("Swayidle is inhibiting now!");
-                                            inhibit.0 = Some(child);
-                                        }
-                                        Err(e) => {
-                                            eprintln!("unable to block swayidle :: {:?}", e)
-                                        }
-                                    }
-                                } else if !block {
-                                    if let Some(mut killing) = inhibit.0.take() {
-                                        killing.wait()?;
-                                        killing.kill()?;
-                                        process_running
-                                            .store(false, std::sync::atomic::Ordering::SeqCst);
-                                    }
-                                }
-                            }
-                            Err(e) => eprintln!("Error handling D-Bus message: {:?}", e),
-                        }
-                        inhibit.1 =
-                            current_time + Duration::from_secs(INHIBIT_DURATION - OVERLAP_DURATION);
+    // We want to check every single media player to see if they are playing
+    fn list_media_players(&self) -> Result<Vec<String>, dbus::Error> {
+        let msg = Message::new_method_call(
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "ListNames",
+        )
+        .map_err(|e| dbus::Error::new_failed(&e.to_string()))?;
 
-                        next_check = current_time + Duration::from_secs(OVERLAP_DURATION);
+        let response = self
+            .conn
+            .send_with_reply_and_block(msg, Duration::from_secs(5))?;
+        let names: Vec<String> = response
+            .get1()
+            .ok_or_else(|| dbus::Error::new_failed("Failed to get names from response"))?;
+
+        Ok(names
+            .into_iter()
+            .filter(|name| name.starts_with("org.mpris.MediaPlayer2."))
+            .collect())
+    }
+
+    fn check_playback_status(&mut self) -> Result<(), Box<dyn Error>> {
+        let players = self.list_media_players()?;
+
+        log::debug!("Listing players! {:?}", players);
+        if players.len() <= 0 && self.process_running {
+            self.should_block = false;
+            return Ok(());
+        }
+        for service in players {
+            let object_path = "/org/mpris/MediaPlayer2";
+            let interface = "org.mpris.MediaPlayer2.Player";
+            let property = "PlaybackStatus";
+
+            let msg = Message::new_method_call(
+                service,
+                object_path,
+                "org.freedesktop.DBus.Properties",
+                "Get",
+            )
+            .unwrap()
+            .append1(interface)
+            .append1(property);
+
+            let response = self
+                .conn
+                .send_with_reply_and_block(msg, Duration::from_secs(5));
+
+            log::debug!("response is {:?}", response);
+            match response {
+                Ok(resp) => {
+                    if let Some(arg) = resp.get_items().get(0) {
+                        match arg {
+                            MessageItem::Variant(ref value) => match **value {
+                                MessageItem::Str(ref s) => {
+                                    if s == "Playing" {
+                                        self.should_block = true;
+                                        break;
+                                    }
+                                    self.should_block = false;
+                                }
+                                _ => log::debug!("Not a string inside the variant. . . IDK what to do so I will throw it away. It is a {:?}", value),
+                            },
+                            _ => {
+                                log::debug!(
+                                    "Not a Variant . . . IDK what to do so I will throw it away. It is a {:?}", arg
+                                );
+                            }
+                        }
+                    } else {
+                        log::debug!("No arguments found in the message.");
                     }
                 }
+                Err(_) => {
+                    log::error!("Unable to lookup playback . . . skipping");
+                }
             }
-            sleep(Duration::from_secs(OVERLAP_DURATION));
+        }
+        Ok(())
+    }
+
+    fn run(&mut self) -> Result<(), Box<dyn Error>> {
+        let mut next_check = Instant::now();
+        self.last_block_time = Some(Instant::now());
+        loop {
+            let _ = self.check_playback_status();
+            log::debug!(
+                "should_block: {:?} -- process_running: {:?}",
+                self.should_block,
+                self.process_running
+            );
+            if Instant::now() >= next_check {
+                log::debug!("hey we made it into the timing check");
+                if self.should_block && !self.process_running {
+                    let _ = self.check_and_kill_zombies();
+                    match self.run_cmd() {
+                        Ok(child) => {
+                            log::debug!("Swayidle is inhibiting now!");
+                            self.inhibit_process = Some(child);
+                            next_check = next_check + Duration::from_secs(self.inhibit_duration);
+                        }
+                        Err(e) => {
+                            eprintln!("unable to block swayidle :: {:?}", e)
+                        }
+                    }
+                } else if !self.should_block {
+                    let _ = self.check_and_kill_zombies();
+                    self.process_running = false;
+                } else {
+                    let _ = self.check_and_kill_zombies();
+                    self.process_running = false;
+                }
+            }
+            if self.should_block && self.process_running {
+                sleep(Duration::from_secs(SLEEP_DURATION + INHIBIT_DURATION))
+            } else {
+                sleep(Duration::from_secs(SLEEP_DURATION));
+            }
         }
     }
 
-    fn run_cmd(&self) -> Result<Child, Box<dyn Error>> {
-        log::debug!("command is spawning");
-        let process_running = Arc::clone(&self.process_running);
+    fn check_and_kill_zombies(&mut self) -> Result<(), Box<dyn Error>> {
+        if let Some(ref mut killing) = self.inhibit_process.take() {
+            log::debug!("Killing the child process");
+            killing.wait()?;
+            killing.kill()?;
+            match killing.try_wait() {
+                Ok(None) => {
+                    log::debug!("Zombie Detected 🧟: Killing now");
+                    killing.wait()?;
+                    killing.kill()?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn run_cmd(&mut self) -> Result<Child, Box<dyn Error>> {
         match Command::new("systemd-inhibit")
             .arg("--what")
             .arg("idle")
@@ -166,14 +189,13 @@ impl IdleApp {
             .spawn()
         {
             Ok(child) => {
-                if let Ok(mut last_block_time) = self.last_block_time.lock() {
-                    *last_block_time = Some(Instant::now());
-                }
-                process_running.store(true, std::sync::atomic::Ordering::SeqCst);
+                log::debug!("systemd-inhibit has been spawned");
+                self.last_block_time = Some(Instant::now());
+                self.process_running = true;
                 Ok(child)
             }
             Err(e) => {
-                eprintln!("Failed to execute systemd-inhibit command: {:?}", e);
+                log::error!("Failed to execute systemd-inhibit command: {:?}", e);
                 Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Unable to block swayidle due to unknown error",
@@ -183,43 +205,14 @@ impl IdleApp {
     }
 }
 
-const INTERFACE_NAME: &str = "org.freedesktop.DBus.Properties";
-const DBUS_NAMESPACE: &str = "/org/mpris/MediaPlayer2";
 const INHIBIT_DURATION: u64 = 25;
-const OVERLAP_DURATION: u64 = 5;
+const SLEEP_DURATION: u64 = 5;
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     log::debug!("Swaddle starting up");
-    let app = IdleApp::new(30)?;
-    app.run()
-}
+    log::debug!("Swaddle rewrite version is being called");
 
-#[cfg(test)]
-mod dbusr_runner_tests {
-    use super::*;
-
-    #[test]
-    fn test_dbus_runner_initialization() {
-        let runner = DBusRunner::new();
-        assert!(runner.is_ok());
-    }
-
-    #[test]
-    fn test_add_match() {
-        let runner = DBusRunner::new().unwrap();
-        let result = runner.add_match();
-        assert!(result.is_ok());
-    }
-}
-
-#[cfg(test)]
-mod idle_app_tests {
-    use super::*;
-
-    #[test]
-    fn test_idle_app_initialization() {
-        let app = IdleApp::new(60);
-        assert!(app.is_ok());
-    }
+    let mut app = IdleApp::new(INHIBIT_DURATION);
+    let _ = app.run();
 }
