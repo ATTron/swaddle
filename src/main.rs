@@ -87,11 +87,9 @@ impl IdleApp {
             match response {
                 Ok(resp) => {
                     if let Some(arg) = resp.get_items().get(0) {
-                        log::debug!("ARG IS {:?}", arg);
                         match arg {
                             MessageItem::Variant(ref value) => match **value {
                                 MessageItem::Str(ref s) => {
-                                    log::debug!("showing unwrapped: {}", s);
                                     if s == "Playing" {
                                         self.should_block = true;
                                         break;
@@ -131,12 +129,7 @@ impl IdleApp {
             if Instant::now() >= next_check {
                 log::debug!("hey we made it into the timing check");
                 if self.should_block && !self.process_running {
-                    log::debug!("HEY WE SHOULD BLOCK");
-                    if let Some(mut killing) = self.inhibit_process.take() {
-                        log::debug!("Killing the child process");
-                        killing.wait()?;
-                        killing.kill()?;
-                    }
+                    let _ = self.check_and_kill_zombies();
                     match self.run_cmd() {
                         Ok(child) => {
                             log::debug!("Swayidle is inhibiting now!");
@@ -148,12 +141,11 @@ impl IdleApp {
                         }
                     }
                 } else if !self.should_block {
-                    if let Some(ref mut killing) = self.inhibit_process {
-                        log::debug!("Killing the child process");
-                        killing.wait()?;
-                        killing.kill()?;
-                        self.process_running = false;
-                    }
+                    let _ = self.check_and_kill_zombies();
+                    self.process_running = false;
+                } else {
+                    let _ = self.check_and_kill_zombies();
+                    self.process_running = false;
                 }
             }
             if self.should_block && self.process_running {
@@ -162,6 +154,23 @@ impl IdleApp {
                 sleep(Duration::from_secs(SLEEP_DURATION));
             }
         }
+    }
+
+    fn check_and_kill_zombies(&mut self) -> Result<(), Box<dyn Error>> {
+        if let Some(ref mut killing) = self.inhibit_process.take() {
+            log::debug!("Killing the child process");
+            killing.wait()?;
+            killing.kill()?;
+            match killing.try_wait() {
+                Ok(None) => {
+                    log::debug!("Zombie Detected 🧟: Killing now");
+                    killing.wait()?;
+                    killing.kill()?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     fn run_cmd(&mut self) -> Result<Child, Box<dyn Error>> {
