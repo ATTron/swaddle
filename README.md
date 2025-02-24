@@ -3,7 +3,7 @@
 Swayidle inhibitor that automatically detects audio / video and will prevent your system from sleeping. No manual intervention needed!
 
 **note**  
-**right now this has only been tested with zen (firefox) and brave(chrome)**
+**right now this has only been tested with zen (firefox) and brave(chrome) as well as the Spotify desktop player**
 
 ## Installation
 
