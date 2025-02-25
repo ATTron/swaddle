@@ -8,13 +8,13 @@ build_release:
 build_debug:
   cargo build
 
-# runs swaddle w trace via `cargo run`
+# runs swaddle w debug via `cargo run`
 run_debug:
-  RUST_LOG=trace cargo run
+  RUST_LOG=debug cargo run
 
 # run the release version of swaddle
 run_release: build_release
-  RUST_LOG=info ./target/release/swaddle
+  ./target/release/swaddle
 
 # cleans up build artifacts
 clean:
