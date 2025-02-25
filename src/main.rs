@@ -1,35 +1,77 @@
+use config::{Config, File};
 use dbus::{
     arg::messageitem::MessageItem,
     blocking::{BlockingSender, Connection},
     Message,
 };
 use env_logger::Env;
+use log::debug;
+use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
+    fs::{self, create_dir_all},
+    path::PathBuf,
     process::{Child, Command},
-    time::Instant,
+    thread::sleep,
+    time::{Duration, Instant},
 };
-use std::{thread::sleep, time::Duration};
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Settings {
+    debug: bool,
+    server: ServerSettings,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ServerSettings {
+    inhibit_duration: u64,
+    sleep_duration: u64,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            debug: false,
+            server: ServerSettings {
+                inhibit_duration: 25,
+                sleep_duration: 5,
+            },
+        }
+    }
+}
 
 struct IdleApp {
     conn: Connection,
-    inhibit_duration: u64,
     process_running: bool,
     should_block: bool,
     inhibit_process: Option<Child>,
     last_block_time: Option<Instant>,
+    config: Settings,
 }
 
 impl IdleApp {
-    fn new(inhibit_duration: u64) -> IdleApp {
+    fn new(config_from_file: Result<Settings, Box<dyn std::error::Error>>) -> IdleApp {
         let conn = Connection::new_session().expect("Failed to connect to D-Bus");
+        let mut config: Settings = Settings {
+            debug: false,
+            server: ServerSettings {
+                inhibit_duration: 25,
+                sleep_duration: 5,
+            },
+        };
+        match config_from_file {
+            Ok(file_config) => config = file_config,
+            Err(_e) => {
+                debug!("No config found or parsed. Using the defaults");
+            }
+        }
         IdleApp {
             conn,
-            inhibit_duration,
             process_running: false,
             should_block: false,
             inhibit_process: None::<Child>,
             last_block_time: None,
+            config,
         }
     }
 
@@ -127,14 +169,15 @@ impl IdleApp {
                 self.process_running
             );
             if Instant::now() >= next_check {
-                log::debug!("hey we made it into the timing check");
+                log::debug!("timing check");
                 if self.should_block && !self.process_running {
                     let _ = self.check_and_kill_zombies();
                     match self.run_cmd() {
                         Ok(child) => {
                             log::debug!("Swayidle is inhibiting now!");
                             self.inhibit_process = Some(child);
-                            next_check = next_check + Duration::from_secs(self.inhibit_duration);
+                            next_check = next_check
+                                + Duration::from_secs(self.config.server.inhibit_duration);
                         }
                         Err(e) => {
                             eprintln!("unable to block swayidle :: {:?}", e)
@@ -149,9 +192,11 @@ impl IdleApp {
                 }
             }
             if self.should_block && self.process_running {
-                sleep(Duration::from_secs(SLEEP_DURATION + INHIBIT_DURATION))
+                sleep(Duration::from_secs(
+                    self.config.server.sleep_duration + self.config.server.inhibit_duration,
+                ))
             } else {
-                sleep(Duration::from_secs(SLEEP_DURATION));
+                sleep(Duration::from_secs(self.config.server.sleep_duration));
             }
         }
     }
@@ -185,7 +230,7 @@ impl IdleApp {
             .arg("block")
             .arg("sh")
             .arg("-c")
-            .arg(format!("sleep {}", self.inhibit_duration))
+            .arg(format!("sleep {}", self.config.server.inhibit_duration))
             .spawn()
         {
             Ok(child) => {
@@ -205,14 +250,42 @@ impl IdleApp {
     }
 }
 
-const INHIBIT_DURATION: u64 = 25;
-const SLEEP_DURATION: u64 = 5;
+fn get_config_path() -> PathBuf {
+    let mut path = dirs::home_dir().expect("Could not find home directory");
+    path.push(".config/swaddle/config.toml");
+    path
+}
+
+fn read_or_create_config() -> Result<Settings, Box<dyn std::error::Error>> {
+    let config_path = get_config_path();
+
+    if !config_path.exists() {
+        let default_settings = Settings::default();
+        let config_dir = config_path.parent().unwrap();
+        create_dir_all(config_dir)?;
+        let _ = fs::write(
+            &config_path,
+            toml::to_string_pretty(&default_settings).unwrap(),
+        );
+        // fs::write(&config_path, toml::to_string_pretty(&default_settings)?)?;
+        return Ok(default_settings);
+    }
+
+    Ok(Config::builder()
+        .add_source(File::from(config_path))
+        .build()?
+        .try_deserialize()?)
+}
 
 fn main() {
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
-    log::debug!("Swaddle starting up");
-    log::debug!("Swaddle rewrite version is being called");
+    let config = read_or_create_config();
+    let mut app = IdleApp::new(config);
+    let log_level = if app.config.debug { "debug" } else { "info" };
 
-    let mut app = IdleApp::new(INHIBIT_DURATION);
+    env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
+
+    debug!("Swaddle starting up");
+    debug!("Swaddle rewrite version is being called");
+
     let _ = app.run();
 }

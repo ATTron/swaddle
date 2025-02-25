@@ -2,14 +2,24 @@
 
 Swayidle inhibitor that automatically detects audio / video and will prevent your system from sleeping. No manual intervention needed!
 
-**note**  
-**right now this has only been tested with zen (firefox) and brave(chrome) as well as the Spotify desktop player**
+## Overview
+
+The main function of this project is to keep any sway based WM from going into an idle state when consuming media. Swaddle will monitor the dbus running daemon and based on values it sees in `Playback Status` will correctly cause idling or inhibition.
+
+## Dependencies
+
+* `dirs`: Config setup
+* `config`: Config building
+* `dbus`: Interfacing with the D-Bus.
+* `env_logger`: Better log handling
+* `toml`: For creating config file
+* `serde`: To serialize toml
 
 ## Installation
 
 Swaddle can be installed from the AUR:
 
-```sh
+```bash
 paru -S swaddle
 ```
 
@@ -17,8 +27,8 @@ paru -S swaddle
 
 * Clone the repo and execute
 
-   ```sh
-   cargo build --release
+   ```bash
+   just build_release
    ```
 
 * You can move the binary into your `$PATH` or run directly
@@ -27,8 +37,8 @@ paru -S swaddle
 
 To get some debugging logging from swaddle you can set the log level to debug and execute
 
-```sh
-RUST_LOG=debug ./target/release/swaddle
+```bash
+just run_debug
 ```
 
 ## Post-Install
@@ -51,21 +61,18 @@ exec = /usr/local/bin/swaddle &
 
  Then reload your configuration or restart Sway/Hyprland.
 
-## Overview
+### Configuration File (Optional)
 
-The main function of this project is to keep any sway based WM from going into an idle state when consuming media. Swaddle will monitor the dbus running daemon and based on values it sees in `Playback Status` will correctly cause idling or inhibition.
+The first time swaddle is run it will create a config file
+ under `$HOME/.config/swaddle/config.toml`.
 
+You can also create / overwrite the config with the following options  
 
-## Dependencies
-
-* `dbus`: For interfacing with the D-Bus.
-* `env_logger`: For better log handling
-
-## Future Enhancements
-
-* Extend the command execution capabilities based on additional playback statuses or other D-Bus signals.
-* Integrate with more complex system behaviors or external applications.
-* Improve error handling and logging for better diagnostics and maintenance.
-* Add unit tests and integration tests
+| Name | Value | Explaination | Default |
+| ---- | ----- | ------------ | ------- |
+|debug|boolean|should swaddle be run in debug mode|<span style="color:grey">true</span>|
+|server|table|includes the options to tweak how swaddle operates||
+|server.inhibit_duration|integer|number of seconds to inhibit per cycle|<span style="color:grey">25</span>|
+|server.sleep_duration|integer|number of seconds to wait between cycles|<span style="color:grey">5</span>|
 
 ---
