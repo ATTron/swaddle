@@ -5,7 +5,6 @@ use dbus::{
     Message,
 };
 use env_logger::Env;
-use log::debug;
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
@@ -62,7 +61,7 @@ impl IdleApp {
         match config_from_file {
             Ok(file_config) => config = file_config,
             Err(_e) => {
-                debug!("No config found or parsed. Using the defaults");
+                log::debug!("No config found or parsed. Using the defaults");
             }
         }
         IdleApp {
@@ -267,7 +266,6 @@ fn read_or_create_config() -> Result<Settings, Box<dyn std::error::Error>> {
             &config_path,
             toml::to_string_pretty(&default_settings).unwrap(),
         );
-        // fs::write(&config_path, toml::to_string_pretty(&default_settings)?)?;
         return Ok(default_settings);
     }
 
@@ -284,8 +282,7 @@ fn main() {
 
     env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
 
-    debug!("Swaddle starting up");
-    debug!("Swaddle rewrite version is being called");
+    log::debug!("Swaddle starting up");
 
     let _ = app.run();
 }
