@@ -43,7 +43,7 @@ just run_debug
 
 ## Post-Install
 
- To integrate swaddle with Sway/Hyprland, add the following line to your Sway/Hypr configuration:
+ To integrate swaddle with Sway/Hyprland/River, add the following line to your Sway/Hypr configuration:
 
 * Sway:
 
