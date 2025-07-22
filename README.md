@@ -70,7 +70,7 @@ You can also create / overwrite the config with the following options
 
 | Name | Value | Explaination | Default |
 | ---- | ----- | ------------ | ------- |
-|debug|boolean|should swaddle be run in debug mode|<span style="color:grey">true</span>|
+|debug|boolean|should swaddle be run in debug mode|<span style="color:grey">false</span>|
 |server|table|includes the options to tweak how swaddle operates||
 |server.inhibit_duration|integer|number of seconds to inhibit per cycle|<span style="color:grey">25</span>|
 |server.sleep_duration|integer|number of seconds to wait between cycles|<span style="color:grey">5</span>|
