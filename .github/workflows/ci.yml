@@ -10,18 +10,13 @@ jobs:
   test:
     name: Test Suite
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
-        override: true
         components: rustfmt, clippy
-
     - name: Install system dependencies
       run: |
         sudo apt-get update
@@ -36,146 +31,105 @@ jobs:
           systemd \
           libdbus-1-dev \
           pkg-config
-
-    - name: Cache cargo registry
-      uses: actions/cache@v3
+    - name: Cache cargo dependencies
+      uses: actions/cache@v4
       with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-cargo-registry-
-
-    - name: Cache cargo index
-      uses: actions/cache@v3
-      with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-index-
-
-    - name: Cache cargo build
-      uses: actions/cache@v3
-      with:
-        path: target
-        key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-build-
-
+          ${{ runner.os }}-cargo-
     - name: Check code formatting
       run: cargo fmt -- --check
-
     - name: Run clippy (linter)
       run: cargo clippy -- -D warnings
-
     - name: Start D-Bus session for tests
       run: |
+        # Start D-Bus daemon for testing
         export DBUS_SESSION_BUS_ADDRESS=$(dbus-daemon --session --print-address --fork)
         echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
-
+        # Give D-Bus time to start
         sleep 2
-
+        # Verify D-Bus is working
         echo "Testing D-Bus connection..."
         dbus-send --session --dest=org.freedesktop.DBus --type=method_call \
           --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListNames > /dev/null
         echo "D-Bus session ready"
-
     - name: Run unit tests
       env:
         RUST_BACKTRACE: 1
       run: |
         echo "Running all tests..."
         cargo test --verbose
-
     - name: Run integration tests with output
       env:
         RUST_BACKTRACE: 1
       run: |
         echo "Running integration tests with detailed output..."
         cargo test --test integration_tests -- --nocapture
-
     - name: Test mock script standalone
       run: |
         echo "Testing mock media player script..."
         timeout 3s python3 tests/mock_media_player.py || true
         echo "Mock script test completed"
-
     - name: Build release binary
       run: |
         echo "Building release version..."
         cargo build --release
         ls -la target/release/
-
     - name: Upload test artifacts on failure
       if: failure()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: test-logs-${{ github.run_number }}
         path: |
           target/debug/deps/
-          ~/.cargo/registry/src/
         retention-days: 5
 
   lint:
     name: Linting
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
-        override: true
         components: rustfmt, clippy
-
     - name: Install system dependencies for clippy
       run: |
         sudo apt-get update
         sudo apt-get install -y libdbus-1-dev pkg-config
-
     - name: Check formatting
       run: cargo fmt -- --check
-
     - name: Run clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
 
   security:
     name: Security Audit
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
-
+      uses: dtolnay/rust-toolchain@stable
     - name: Install cargo-audit
       run: cargo install cargo-audit
-
     - name: Run security audit
       run: cargo audit
 
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
-        override: true
         components: llvm-tools-preview
-
     - name: Install system dependencies
       run: |
         sudo apt-get update
@@ -186,22 +140,19 @@ jobs:
           python3-gi \
           libdbus-1-dev \
           pkg-config
-
     - name: Install cargo-llvm-cov
       run: cargo install cargo-llvm-cov
-
     - name: Start D-Bus session for coverage
       run: |
         export DBUS_SESSION_BUS_ADDRESS=$(dbus-daemon --session --print-address --fork)
         echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
         sleep 2
-
     - name: Generate code coverage
       run: |
         cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
         files: lcov.info
         fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}

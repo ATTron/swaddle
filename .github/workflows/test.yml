@@ -10,17 +10,13 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
-        override: true
-
+        components: rustfmt, clippy
     - name: Install D-Bus and Python dependencies
       run: |
         sudo apt-get update
@@ -34,20 +30,16 @@ jobs:
           gir1.2-glib-2.0 \
           libdbus-1-dev \
           pkg-config
-
     - name: Setup D-Bus session
       run: |
-        # Start D-Bus daemon for testing
         export DBUS_SESSION_BUS_ADDRESS=$(dbus-daemon --session --print-address --fork)
         echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
         sleep 1
-
         dbus-send --session --dest=org.freedesktop.DBus --type=method_call \
           --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListNames > /dev/null
         echo "✅ D-Bus session ready"
-
     - name: Cache dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/registry
@@ -56,19 +48,16 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
           ${{ runner.os }}-cargo-
-
     - name: Run tests
       env:
         RUST_BACKTRACE: 1
       run: |
         echo "🧪 Running all tests..."
         cargo test --verbose
-
     - name: Verify mock script works
       run: |
         echo "🎭 Testing mock media player script..."
         timeout 2s python3 tests/mock_media_player.py || echo "Mock script completed (expected timeout)"
-
     - name: Build release
       run: |
         echo "🔨 Building release binary..."
