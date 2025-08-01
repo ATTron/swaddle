@@ -15,6 +15,24 @@ The main function of this project is to keep any sway based WM from going into a
 * `toml`: For creating config file
 * `serde`: To serialize toml
 
+## Testing
+
+Swaddle includes comprehensive tests including D-Bus integration tests with a mock media player.
+
+### Prerequisites for Testing
+
+You must install the `pyton-dbus and python-gobject` packages for the dbus mock testing to work as intended.
+
+### Running Tests
+
+```bash
+# Run all tests
+cargo test
+
+# Run the mock media player standalone (for debugging)
+python3 tests/mock_media_player.py
+```
+
 ## Installation
 
 Swaddle can be installed from the AUR:
