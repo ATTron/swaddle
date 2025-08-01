@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main, modern_rust_patterns ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
@@ -85,17 +85,6 @@ jobs:
         path: |
           target/debug/deps/
         retention-days: 5
-
-  lint:
-    name: Linting
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt
 
   security:
     name: Security Audit

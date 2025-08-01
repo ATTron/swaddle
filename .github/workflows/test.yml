@@ -1,8 +1,6 @@
 name: Tests
 
 on:
-  push:
-    branches: [ main, modern_rust_patterns ]
   pull_request:
     branches: [ main ]
 
