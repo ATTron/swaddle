@@ -58,12 +58,10 @@ impl IdleApp {
                 sleep_duration: 5,
             },
         };
-        match config_from_file {
-            Ok(file_config) => config = file_config,
-            Err(_e) => {
-                log::debug!("No config found or parsed. Using the defaults");
-            }
-        }
+        config_from_file
+            .map(|file_config| config = file_config)
+            .map_err(|_| log::debug!("No config found or parsed. Using the defaults"))
+            .ok();
         IdleApp {
             conn,
             process_running: false,
@@ -115,8 +113,7 @@ impl IdleApp {
                 object_path,
                 "org.freedesktop.DBus.Properties",
                 "Get",
-            )
-            .unwrap()
+            )?
             .append1(interface)
             .append1(property);
 
@@ -124,29 +121,28 @@ impl IdleApp {
                 .conn
                 .send_with_reply_and_block(msg, Duration::from_secs(5));
 
-            log::debug!("response is {:?}", response);
+            log::debug!("Connection Message: {:?}", response);
             match response {
                 Ok(resp) => {
-                    if let Some(arg) = resp.get_items().get(0) {
-                        match arg {
-                            MessageItem::Variant(ref value) => match **value {
-                                MessageItem::Str(ref s) => {
-                                    if s == "Playing" {
-                                        self.should_block = true;
-                                        break;
-                                    }
-                                    self.should_block = false;
-                                }
-                                _ => log::debug!("Not a string inside the variant. . . IDK what to do so I will throw it away. It is a {:?}", value),
-                            },
-                            _ => {
-                                log::debug!(
-                                    "Not a Variant . . . IDK what to do so I will throw it away. It is a {:?}", arg
-                                );
-                            }
-                        }
-                    } else {
+                    let items = resp.get_items();
+                    let Some(arg) = items.get(0) else {
                         log::debug!("No arguments found in the message.");
+                        continue;
+                    };
+
+                    let MessageItem::Variant(ref value) = arg else {
+                        log::debug!("Not a Variant . . . IDK what to do so I will throw it away. It is a {:?}", arg);
+                        continue;
+                    };
+
+                    let MessageItem::Str(ref s) = **value else {
+                        log::debug!("Not a string inside the variant. . . IDK what to do so I will throw it away. It is a {:?}", value);
+                        continue;
+                    };
+
+                    self.should_block = s == "Playing";
+                    if self.should_block {
+                        break;
                     }
                 }
                 Err(_) => {
@@ -171,17 +167,15 @@ impl IdleApp {
                 log::debug!("timing check");
                 if self.should_block && !self.process_running {
                     let _ = self.check_and_kill_zombies();
-                    match self.run_cmd() {
-                        Ok(child) => {
+                    self.run_cmd()
+                        .map(|child| {
                             log::debug!("Swayidle is inhibiting now!");
                             self.inhibit_process = Some(child);
                             next_check = next_check
                                 + Duration::from_secs(self.config.server.inhibit_duration);
-                        }
-                        Err(e) => {
-                            eprintln!("unable to block swayidle :: {:?}", e)
-                        }
-                    }
+                        })
+                        .map_err(|e| log::error!("Unable to blow swayidle :: {:?}", e))
+                        .ok();
                 } else if !self.should_block {
                     let _ = self.check_and_kill_zombies();
                     self.process_running = false;
@@ -205,20 +199,17 @@ impl IdleApp {
             log::debug!("Killing the child process");
             killing.wait()?;
             killing.kill()?;
-            match killing.try_wait() {
-                Ok(None) => {
-                    log::debug!("Zombie Detected 🧟: Killing now");
-                    killing.wait()?;
-                    killing.kill()?;
-                }
-                _ => {}
+            if let Ok(None) = killing.try_wait() {
+                log::debug!("Zombie Detected 🧟: Killing now");
+                killing.wait()?;
+                killing.kill()?;
             }
         }
         Ok(())
     }
 
     fn run_cmd(&mut self) -> Result<Child, Box<dyn Error>> {
-        match Command::new("systemd-inhibit")
+        Command::new("systemd-inhibit")
             .arg("--what")
             .arg("idle")
             .arg("--who")
@@ -231,21 +222,19 @@ impl IdleApp {
             .arg("-c")
             .arg(format!("sleep {}", self.config.server.inhibit_duration))
             .spawn()
-        {
-            Ok(child) => {
+            .map(|child| {
                 log::debug!("systemd-inhibit has been spawned");
                 self.last_block_time = Some(Instant::now());
                 self.process_running = true;
-                Ok(child)
-            }
-            Err(e) => {
+                child
+            })
+            .map_err(|e| {
                 log::error!("Failed to execute systemd-inhibit command: {:?}", e);
-                Err(Box::new(std::io::Error::new(
+                Box::from(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Unable to block swayidle due to unknown error",
-                )))
-            }
-        }
+                ))
+            })
     }
 }
 
