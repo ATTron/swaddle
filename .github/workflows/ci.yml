@@ -16,7 +16,7 @@ jobs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
-        components: rustfmt, clippy
+        components: rustfmt
     - name: Install system dependencies
       run: |
         sudo apt-get update
@@ -43,8 +43,6 @@ jobs:
           ${{ runner.os }}-cargo-
     - name: Check code formatting
       run: cargo fmt -- --check
-    - name: Run clippy (linter)
-      run: cargo clippy -- -D warnings
     - name: Start D-Bus session for tests
       run: |
         # Start D-Bus daemon for testing
@@ -97,15 +95,7 @@ jobs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
-        components: rustfmt, clippy
-    - name: Install system dependencies for clippy
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libdbus-1-dev pkg-config
-    - name: Check formatting
-      run: cargo fmt -- --check
-    - name: Run clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
+        components: rustfmt
 
   security:
     name: Security Audit

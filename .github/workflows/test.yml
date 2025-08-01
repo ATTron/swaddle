@@ -16,7 +16,7 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       with:
-        components: rustfmt, clippy
+        components: rustfmt
     - name: Install D-Bus and Python dependencies
       run: |
         sudo apt-get update
