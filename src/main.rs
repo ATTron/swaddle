@@ -8,7 +8,7 @@ fn main() {
 
     env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
 
-    log::debug!("Swaddle starting up");
+    log::debug!("Swaddle: Starting up . . .");
 
     let _ = app.run();
 }
