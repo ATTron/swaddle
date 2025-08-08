@@ -96,7 +96,7 @@ impl IdleApp {
     pub fn check_playback_status(&mut self) -> Result<(), Box<dyn Error>> {
         let players = self.list_media_players()?;
 
-        log::debug!("Listing players! {:?}", players);
+        log::debug!("Listing players: {:?}", players);
         if players.is_empty() && self.process_running {
             self.should_block = false;
             return Ok(());
