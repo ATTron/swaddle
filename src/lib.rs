@@ -49,7 +49,7 @@ pub struct IdleApp {
 impl IdleApp {
     pub fn new(config_from_file: Result<Settings, Box<dyn std::error::Error>>) -> IdleApp {
         let conn = Connection::new_session().expect("Failed to connect to D-Bus");
-        let mut config: Settings = Settings {
+        let mut config = Settings {
             debug: false,
             server: ServerSettings {
                 inhibit_duration: 25,
