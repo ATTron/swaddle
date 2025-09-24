@@ -129,7 +129,10 @@ impl IdleApp {
                     };
 
                     let MessageItem::Variant(ref value) = arg else {
-                        log::debug!("Not a Variant . . . IDK what to do so I will throw it away. It is a {:?}", arg);
+                        log::debug!(
+                            "Not a Variant . . . IDK what to do...throwing it away. It is a {:?}",
+                            arg
+                        );
                         continue;
                     };
 
