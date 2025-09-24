@@ -6,15 +6,6 @@ Swayidle inhibitor that automatically detects audio / video and will prevent you
 
 The main function of this project is to keep any sway based WM from going into an idle state when consuming media. Swaddle will monitor the dbus running daemon and based on values it sees in `Playback Status` will correctly cause idling or inhibition.
 
-## Dependencies
-
-* `dirs`: Config setup
-* `config`: Config building
-* `dbus`: Interfacing with the D-Bus.
-* `env_logger`: Better log handling
-* `toml`: For creating config file
-* `serde`: To serialize toml
-
 ## Testing
 
 Swaddle includes comprehensive tests including D-Bus integration tests with a mock media player.
