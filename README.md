@@ -1,5 +1,7 @@
 # Swaddle
 
+**NOTE: This Project Has Been Moved To [Codeberg](https://codeberg.org/templetr0n)**
+
 Swayidle inhibitor that automatically detects audio / video and will prevent your system from sleeping. No manual intervention needed!
 
 ## Overview
@@ -20,7 +22,7 @@ You must install the `pyton-dbus and python-gobject` packages for the dbus mock 
 # Run all tests
 cargo test
 
-# Run the mock media player standalone (for debugging)
+# Run the mock media player standalone (for debugging)j
 python3 tests/mock_media_player.py
 ```
 
