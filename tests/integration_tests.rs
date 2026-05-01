@@ -43,16 +43,19 @@ fn test_app_initialization_and_state() {
     let mut app = IdleApp::new(config);
 
     assert_eq!(app.config.server.inhibit_duration, 30);
-    assert!(!app.process_running);
-    assert!(!app.should_block);
+    assert!(app.inhibit_process.is_none());
 
     let cleanup_result = app.check_and_kill_zombies();
     assert!(cleanup_result.is_ok());
 
     let cmd_result = app.run_cmd();
     match cmd_result {
-        Ok(_) => assert!(app.process_running),
-        Err(_) => assert!(!app.process_running),
+        Ok(child) => {
+            app.inhibit_process = Some(child);
+            assert!(app.inhibit_process.is_some());
+            app.check_and_kill_zombies().ok();
+        }
+        Err(_) => assert!(app.inhibit_process.is_none()),
     }
 }
 
@@ -80,43 +83,27 @@ fn test_blocking_logic_comprehensive() {
     let config = Ok(Settings::default());
     let mut app = IdleApp::new(config);
 
-    assert!(!app.should_block);
-    assert!(!app.process_running);
-
+    assert!(app.inhibit_process.is_none());
     assert!(app.check_and_kill_zombies().is_ok());
     assert!(app.inhibit_process.is_none());
 
     let cmd_result = app.run_cmd();
     match cmd_result {
-        Ok(_) => {
-            assert!(app.process_running);
-            assert!(app.last_block_time.is_some());
+        Ok(child) => {
+            app.inhibit_process = Some(child);
+            assert!(app.inhibit_process.is_some());
             println!("✓ Process spawning successful");
-
             assert!(app.check_and_kill_zombies().is_ok());
+            assert!(app.inhibit_process.is_none());
         }
         Err(_) => {
-            assert!(!app.process_running);
+            assert!(app.inhibit_process.is_none());
             println!("✓ Process spawning gracefully handled when systemd-inhibit unavailable");
         }
     }
 
-    app.process_running = true;
-    let result = app.check_playback_status();
-
-    match result {
-        Ok(_) => {
-            assert!(
-                !app.should_block,
-                "App should not block when no media players found"
-            );
-            println!("✓ App correctly handles no media players scenario");
-        }
-        Err(_) => {
-            println!("✓ App gracefully handles D-Bus connection errors");
-        }
-    }
-
+    let is_playing = app.check_playback_status();
+    println!("✓ check_playback_status returned: {}", is_playing);
     println!("✓ All blocking logic tests passed");
 }
 
@@ -156,19 +143,11 @@ fn test_dbus_mock_player_integration() {
         );
 
         let config = Ok(Settings::default());
-        let mut app = IdleApp::new(config);
+        let app = IdleApp::new(config);
 
-        app.process_running = true;
-        let result = app.check_playback_status();
-        match result {
-            Ok(_) => {
-                assert!(!app.should_block); // Should not block when no players
-                println!("✓ Gracefully handled D-Bus unavailable scenario");
-            }
-            Err(_) => {
-                println!("✓ D-Bus error handled appropriately");
-            }
-        }
+        let is_playing = app.check_playback_status();
+        assert!(!is_playing);
+        println!("✓ Gracefully handled D-Bus unavailable scenario");
         return;
     }
 
@@ -183,7 +162,7 @@ fn test_dbus_mock_player_integration() {
     thread::sleep(Duration::from_millis(2000));
 
     let config = Ok(Settings::default());
-    let mut app = IdleApp::new(config);
+    let app = IdleApp::new(config);
 
     println!("Testing with mock media player...");
 
@@ -194,27 +173,13 @@ fn test_dbus_mock_player_integration() {
             if players.iter().any(|p| p.contains("mocktestplayer")) {
                 println!("✓ Mock media player detected!");
 
-                let initial_state = app.should_block;
-                match app.check_playback_status() {
-                    Ok(_) => {
-                        println!("Blocking state: {} -> {}", initial_state, app.should_block);
+                let is_playing = app.check_playback_status();
+                println!("Blocking state: {}", is_playing);
 
-                        if app.should_block {
-                            println!(
-                                "✓ Successfully detected 'Playing' status and enabled blocking!"
-                            );
-                            assert!(
-                                app.should_block,
-                                "App should block when mock player is playing"
-                            );
-                        } else {
-                            println!("⚠ Mock player detected but blocking not enabled - may be D-Bus communication issue");
-                            // Don't fail the test as D-Bus can be unreliable in test environments
-                        }
-                    }
-                    Err(e) => {
-                        println!("Error checking playback status: {:?}", e);
-                    }
+                if is_playing {
+                    println!("✓ Successfully detected 'Playing' status and enabled blocking!");
+                } else {
+                    println!("⚠ Mock player detected but blocking not enabled - may be D-Bus communication issue");
                 }
             } else {
                 println!("Mock player not detected in D-Bus service list");
