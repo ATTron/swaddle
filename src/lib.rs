@@ -10,7 +10,7 @@ use std::{
     fs::{self, create_dir_all},
     path::PathBuf,
     process::{Child, Command},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -39,33 +39,19 @@ impl Default for Settings {
 
 pub struct IdleApp {
     pub conn: Connection,
-    pub process_running: bool,
-    pub should_block: bool,
     pub inhibit_process: Option<Child>,
-    pub last_block_time: Option<Instant>,
     pub config: Settings,
 }
 
 impl IdleApp {
     pub fn new(config_from_file: Result<Settings, Box<dyn std::error::Error>>) -> IdleApp {
         let conn = Connection::new_session().expect("Failed to connect to D-Bus");
-        let mut config = Settings {
-            debug: false,
-            server: ServerSettings {
-                inhibit_duration: 25,
-                sleep_duration: 5,
-            },
-        };
-        config_from_file
-            .map(|file_config| config = file_config)
-            .map_err(|_| log::debug!("No config found or parsed. Using the defaults"))
-            .ok();
+        let config = config_from_file
+            .inspect_err(|_| log::debug!("No config found or parsed. Using the defaults"))
+            .unwrap_or_default();
         IdleApp {
             conn,
-            process_running: false,
-            should_block: false,
-            inhibit_process: None::<Child>,
-            last_block_time: None,
+            inhibit_process: None,
             config,
         }
     }
@@ -93,27 +79,34 @@ impl IdleApp {
             .collect())
     }
 
-    pub fn check_playback_status(&mut self) -> Result<(), Box<dyn Error>> {
-        let players = self.list_media_players()?;
+    pub fn check_playback_status(&self) -> bool {
+        let players = match self.list_media_players() {
+            Ok(p) => p,
+            Err(e) => {
+                log::error!("Failed to list media players: {:?}", e);
+                return false;
+            }
+        };
 
         log::debug!("Listing players: {:?}", players);
-        if players.is_empty() && self.process_running {
-            self.should_block = false;
-            return Ok(());
-        }
+
         for service in players {
             let object_path = "/org/mpris/MediaPlayer2";
             let interface = "org.mpris.MediaPlayer2.Player";
             let property = "PlaybackStatus";
 
-            let msg = Message::new_method_call(
+            let msg = match Message::new_method_call(
                 service,
                 object_path,
                 "org.freedesktop.DBus.Properties",
                 "Get",
-            )?
-            .append1(interface)
-            .append1(property);
+            ) {
+                Ok(m) => m.append1(interface).append1(property),
+                Err(e) => {
+                    log::error!("Failed to create D-Bus message: {:?}", e);
+                    continue;
+                }
+            };
 
             let response = self
                 .conn
@@ -129,78 +122,68 @@ impl IdleApp {
                     };
 
                     let MessageItem::Variant(ref value) = arg else {
-                        log::debug!(
-                            "Not a Variant . . . IDK what to do...throwing it away. It is a {:?}",
-                            arg
-                        );
+                        log::debug!("IDK what to do...throwing away {:?}", arg);
                         continue;
                     };
 
                     let MessageItem::Str(ref s) = **value else {
-                        log::debug!("Not a string inside the variant. . . IDK what to do so I will throw it away. It is a {:?}", value);
+                        log::debug!(
+                            "No string inside the variant. . . . throwing away {:?}",
+                            value
+                        );
                         continue;
                     };
 
-                    self.should_block = s == "Playing";
-                    if self.should_block {
-                        break;
+                    if s == "Playing" {
+                        return true;
                     }
                 }
                 Err(_) => {
-                    log::error!("Unable to lookup playback . . . skipping");
+                    log::error!("Failed to lookup playback . . . skipping");
                 }
             }
         }
-        Ok(())
+        false
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
-        let mut next_check = Instant::now();
-        self.last_block_time = Some(Instant::now());
         loop {
-            let _ = self.check_playback_status();
+            let should_block = self.check_playback_status();
             log::debug!(
                 "should_block: {:?} -- process_running: {:?}",
-                self.should_block,
-                self.process_running
+                should_block,
+                self.inhibit_process.is_some()
             );
-            if Instant::now() >= next_check {
-                log::debug!("timing check");
-                if self.should_block && !self.process_running {
-                    let _ = self.check_and_kill_zombies();
-                    self.run_cmd()
-                        .map(|child| {
-                            log::debug!("Swayidle is inhibiting now!");
-                            self.inhibit_process = Some(child);
-                            next_check += Duration::from_secs(self.config.server.inhibit_duration);
-                        })
-                        .map_err(|e| log::error!("Unable to blow swayidle :: {:?}", e))
-                        .ok();
-                } else {
-                    let _ = self.check_and_kill_zombies();
-                    self.process_running = false;
+
+            if should_block {
+                let mut needs_spawn = true;
+                if let Some(ref mut child) = self.inhibit_process {
+                    match child.try_wait() {
+                        Ok(None) => needs_spawn = false,
+                        _ => {}
+                    }
                 }
+
+                if needs_spawn {
+                    let _ = self.check_and_kill_zombies();
+                    if let Ok(child) = self.run_cmd() {
+                        log::debug!("Swayidle is inhibiting now!");
+                        self.inhibit_process = Some(child);
+                    }
+                }
+            } else if self.inhibit_process.is_some() {
+                let _ = self.check_and_kill_zombies();
             }
-            if self.should_block && self.process_running {
-                std::thread::sleep(Duration::from_secs(
-                    self.config.server.sleep_duration + self.config.server.inhibit_duration,
-                ))
-            } else {
-                std::thread::sleep(Duration::from_secs(self.config.server.sleep_duration));
-            }
+
+            std::thread::sleep(Duration::from_secs(self.config.server.sleep_duration));
         }
     }
 
     pub fn check_and_kill_zombies(&mut self) -> Result<(), Box<dyn Error>> {
-        if let Some(ref mut killing) = self.inhibit_process.take() {
+        if let Some(mut killing) = self.inhibit_process.take() {
             log::debug!("Killing the child process");
-            killing.wait()?;
-            killing.kill()?;
-            if let Ok(None) = killing.try_wait() {
-                log::debug!("Zombie Detected 🧟: Killing now");
-                killing.wait()?;
-                killing.kill()?;
-            }
+            let _ = killing.kill();
+            let _ = killing.wait();
         }
         Ok(())
     }
@@ -219,11 +202,7 @@ impl IdleApp {
             .arg("-c")
             .arg(format!("sleep {}", self.config.server.inhibit_duration))
             .spawn()
-            .inspect(|_| {
-                log::debug!("systemd-inhibit has been spawned");
-                self.last_block_time = Some(Instant::now());
-                self.process_running = true;
-            })
+            .inspect(|_| log::debug!("systemd-inhibit has been spawned"))
             .map_err(|e| {
                 log::error!("Failed to execute systemd-inhibit command: {:?}", e);
                 Box::from(std::io::Error::other(
