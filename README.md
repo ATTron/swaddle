@@ -8,27 +8,9 @@ Swayidle inhibitor that automatically detects audio / video and will prevent you
 
 The main function of this project is to keep any sway based WM from going into an idle state when consuming media. Swaddle will monitor the dbus running daemon and based on values it sees in `Playback Status` will correctly cause idling or inhibition.
 
-## Testing
-
-Swaddle includes comprehensive tests including D-Bus integration tests with a mock media player.
-
-### Prerequisites for Testing
-
-You must install the `pyton-dbus and python-gobject` packages for the dbus mock testing to work as intended.
-
-### Running Tests
-
-```bash
-# Run all tests
-cargo test
-
-# Run the mock media player standalone (for debugging)j
-python3 tests/mock_media_player.py
-```
-
 ## Installation
 
-Swaddle can be installed from the AUR:
+AUR:
 
 ```bash
 paru -S swaddle
